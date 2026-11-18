@@ -1,0 +1,412 @@
+<!doctype html>
+<!--
+  PROTOTYPE, throwaway. Branch: prototype/full-instrument. Do not merge to main.
+  Question: what should the resonator box for the FULL instrument (all keys) look like?
+  Three structurally different variants, switchable via ?variant=A|B|C and the bottom bar (or arrow keys).
+  Run: double-click this file (needs internet for three.js from jsdelivr).
+  All key lengths except F6 are ESTIMATES (L ~ 1/sqrt(f) from the measured F6 key). Measure the real keys.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROTOTYPE Full Instrument</title>
+<style>
+  :root { --bg:#16181d; --panel:#1f232b; --line:#323844; --text:#e6e8ec; --muted:#9aa3b2; --accent:#f5b942; --bad:#ff6b6b; --ok:#6bd08f; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:13px/1.4 system-ui, sans-serif; overflow:hidden; }
+  #view { position:fixed; inset:0; }
+  .panel { position:fixed; background:rgba(31,35,43,.94); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  #controls { top:10px; left:10px; width:270px; }
+  #info { top:10px; right:10px; width:470px; max-height:calc(100vh - 90px); overflow:auto; }
+  h1 { font-size:14px; margin:0 0 4px; }
+  h2 { font-size:13px; margin:10px 0 4px; color:var(--accent); }
+  .proto { background:#7a1f1f; color:#fff; font-weight:700; padding:2px 6px; border-radius:4px; font-size:11px; display:inline-block; margin-bottom:6px; }
+  label { display:flex; justify-content:space-between; align-items:center; gap:8px; margin:4px 0; color:var(--muted); }
+  input[type=number], select { width:90px; background:#111318; color:var(--text); border:1px solid var(--line); border-radius:4px; padding:2px 4px; }
+  input[type=checkbox] { width:auto; }
+  table { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; }
+  th, td { padding:2px 5px; text-align:right; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:500; position:sticky; top:0; background:var(--panel); }
+  td:first-child, th:first-child { text-align:left; }
+  tr.ref td { color:var(--accent); font-weight:600; }
+  .warn { color:var(--bad); }
+  .good { color:var(--ok); }
+  .muted { color:var(--muted); }
+  ul { margin:4px 0; padding-left:18px; }
+  #bar { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:10px;
+         background:#fff; color:#111; border-radius:999px; padding:6px 10px; box-shadow:0 6px 24px rgba(0,0,0,.5); font-weight:600; z-index:10; }
+  #bar button { border:0; background:#111; color:#fff; width:32px; height:32px; border-radius:50%; font-size:16px; cursor:pointer; }
+  #bar span { min-width:260px; text-align:center; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="view"></div>
+<div id="err" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);max-width:560px;background:#7a1f1f;color:#fff;padding:14px 16px;border-radius:8px;z-index:20;white-space:pre-wrap;font:13px/1.4 monospace"></div>
+<script>
+  // Shows any load/runtime error on the page instead of a silent black screen.
+  function showErr(msg) { const e = document.getElementById('err'); e.style.display = 'block'; e.textContent += msg + '\n\n'; }
+  addEventListener('error', e => showErr('Error: ' + (e.message || (e.target && (e.target.src || e.target.href)) || e)), true);
+  addEventListener('unhandledrejection', e => showErr('Error: ' + (e.reason && e.reason.message || e.reason)));
+  setTimeout(() => { if (!window.__protoReady) showErr('Script did not start after 8 s.\nLikely three.js could not load from cdn.jsdelivr.net (offline, proxy or blocked),\nor the browser blocks module scripts on file:// pages.'); }, 8000);
+</script>
+
+<div id="controls" class="panel">
+  <div class="proto">PROTOTYPE, throwaway</div>
+  <h1>Full-instrument resonator</h1>
+  <div class="muted">Drag to orbit, wheel to zoom, right-drag to pan.</div>
+  <h2>Range</h2>
+  <label>Lowest note <select id="lo"></select></label>
+  <label>Highest note <select id="hi"></select></label>
+  <label>Scale <select id="scale"><option value="dia">Diatonic (white keys)</option><option value="chr">Chromatic (one row)</option></select></label>
+  <h2>Assumptions</h2>
+  <label>Key pitch (centre to centre) <input id="pitch" type="number" step="0.5" value="28"></label>
+  <label>End correction [mm] <input id="endCorr" type="number" step="0.5" value="14"></label>
+  <label>Speed of sound [m/s] <input id="c" type="number" step="1" value="343"></label>
+  <label>Wall [mm] <input id="wall" type="number" step="0.2" value="2"></label>
+  <label>Print bed X/Y/Z [mm] <input id="bed" type="number" step="1" value="256"></label>
+  <h2>View</h2>
+  <label>Show keys <input id="showKeys" type="checkbox" checked></label>
+  <label>Cutaway (front half removed) <input id="cut" type="checkbox"></label>
+  <label>Show print bed outline <input id="showBed" type="checkbox"></label>
+</div>
+
+<div id="info" class="panel"></div>
+
+<div id="bar"><button id="prev" title="Previous (left arrow)">&#8592;</button><span id="vlabel"></span><button id="next" title="Next (right arrow)">&#8594;</button></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---------- measured reference (docs/design.md) ----------
+const REF = { f:1402, keyL:123.87, keyW:22.97, holeSpan:76.44, ductW:56, ductT:19 };
+const NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const DIA = [0,2,4,5,7,9,11];
+const F6 = 89;
+const name = m => NAMES[m % 12] + (Math.floor(m / 12) - 1);
+const freq = m => 440 * Math.pow(2, (m - 69) / 12);
+
+// ---------- state ----------
+const VARIANTS = {
+  A: { title:'Tube row', blurb:'One closed tube per note, fixed depth, hung from two slanted rails that follow the post line (vibraphone style).' },
+  B: { title:'Stepped monolith', blurb:'One flat-bottomed box with partitions. Each cell has its own raised floor at the computed depth; plan steps with key length.' },
+  C: { title:'Rail + piston cartridges', blurb:'Straight rail frame on two end legs. Each note is a scaled copy of the v2 body with its own sliding piston, dropped into the rails.' },
+};
+const KEYS = Object.keys(VARIANTS);
+const qs = new URLSearchParams(location.search);
+const state = { variant: KEYS.includes(qs.get('variant')) ? qs.get('variant') : 'A' };
+
+const $ = id => document.getElementById(id);
+for (const id of ['lo','hi']) {
+  for (let m = 72; m <= 108; m++) { const o = document.createElement('option'); o.value = m; o.textContent = name(m); $(id).appendChild(o); }
+}
+$('lo').value = qs.get('lo') ?? 84; $('hi').value = qs.get('hi') ?? 108; // default C6..C8, F6 included
+if (qs.get('scale')) $('scale').value = qs.get('scale');
+
+function readParams() {
+  return {
+    lo: +$('lo').value, hi: +$('hi').value, scale: $('scale').value,
+    pitch: +$('pitch').value, endCorr: +$('endCorr').value, c: +$('c').value, wall: +$('wall').value, bed: +$('bed').value,
+    showKeys: $('showKeys').checked, cut: $('cut').checked, showBed: $('showBed').checked,
+  };
+}
+
+function notes(p) {
+  const out = [];
+  const lo = Math.min(p.lo, p.hi), hi = Math.max(p.lo, p.hi);
+  for (let m = lo; m <= hi; m++) {
+    if (p.scale === 'dia' && !DIA.includes(m % 12)) continue;
+    const f = m === F6 ? REF.f : freq(m);
+    const k = Math.sqrt(REF.f / f);            // length scale vs F6 key (same section)
+    const keyL = REF.keyL * k;
+    const quarter = p.c * 1000 / (4 * f);
+    const depth = Math.max(quarter - p.endCorr, 4);
+    out.push({ m, name:name(m), f, keyL, holeSpan:REF.holeSpan * k, ductW:REF.ductW * k, quarter, depth, ref: m === F6 });
+  }
+  out.forEach((n, i) => n.x = (i - (out.length - 1) / 2) * p.pitch);
+  return out;
+}
+
+// ---------- three.js ----------
+window.__protoReady = true;
+// WebGL first; if the browser has no WebGL (GPU acceleration off), fall back to the CPU SVG renderer.
+let renderer, useSVG = false, glReason = '';
+// Try a few context options before giving up; record the browser's reason for the info panel.
+addEventListener('webglcontextcreationerror', e => { glReason = e.statusMessage || glReason; }, true);
+function tryGL() {
+  if (qs.get('svg')) throw new Error('forced SVG'); // ?svg=1 tests the fallback
+  const opts = [{ antialias:true }, { antialias:false }, { antialias:false, powerPreference:'low-power' }];
+  for (const o of opts) {
+    const c = document.createElement('canvas');
+    c.addEventListener('webglcontextcreationerror', e => { glReason = e.statusMessage || 'no status'; });
+    try { return new THREE.WebGLRenderer({ canvas:c, ...o }); } catch (e) { glReason = glReason || e.message; }
+  }
+  throw new Error(glReason);
+}
+try { renderer = tryGL(); renderer.setPixelRatio(devicePixelRatio); }
+catch (e) {
+  console.warn('WebGL failed:', glReason || e.message);
+  const { SVGRenderer } = await import('three/addons/renderers/SVGRenderer.js');
+  renderer = new SVGRenderer(); renderer.setQuality('low'); useSVG = true;
+}
+$('view').appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x16181d);
+if (useSVG) renderer.setClearColor(0x16181d);
+const camera = new THREE.PerspectiveCamera(35, 1, 1, 10000);
+camera.position.set(-150, 330, 560);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(100, -30, 0); // offset so the model sits between the two panels
+scene.add(new THREE.AmbientLight(0xffffff, useSVG ? .25 : .5));
+scene.add(new THREE.HemisphereLight(0xffffff, 0x334, useSVG ? 0 : .8));
+const sun = new THREE.DirectionalLight(0xffffff, useSVG ? .55 : 1.6); sun.position.set(-300, 600, 400); scene.add(sun);
+const grid = new THREE.GridHelper(1200, 48, 0x3a4150, 0x262b34); scene.add(grid);
+if (useSVG) { grid.material.vertexColors = false; grid.material.color.set(0x2a2f38); }
+
+let root = new THREE.Group(); scene.add(root);
+
+function mat(color, opts = {}) {
+  if (useSVG) return new THREE.MeshLambertMaterial({ color });
+  return new THREE.MeshStandardMaterial({ color, roughness:.6, metalness:.05, side:THREE.DoubleSide, ...opts });
+}
+let M = {}; let vol = 0;
+// Cutaway is done on the geometry (keep z <= 0), so it works for both renderers.
+function box(w, h, d, x, y, z, material, printed = true) {
+  if (printed) vol += w * h * d;
+  if (state.p.cut) {
+    const z0 = z - d / 2, z1 = z + d / 2;
+    if (z0 >= -0.01) return null;
+    if (z1 > 0) { d = -z0; z = z0 / 2; }
+  }
+  const g = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+  g.position.set(x, y, z); root.add(g);
+  return g;
+}
+function cyl(r, h, x, y, z, material) {
+  if (state.p.cut && z > 0) return null;
+  const g = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, useSVG ? 8 : 20), material);
+  g.position.set(x, y, z); root.add(g); return g;
+}
+// beam between two points in the XZ plane at height y
+function beam(x1, z1, x2, z2, y, w, h, material) {
+  const len = Math.hypot(x2 - x1, z2 - z1);
+  const g = box(len, h, w, (x1 + x2) / 2, y, (z1 + z2) / 2, material);
+  if (g) g.rotation.y = -Math.atan2(z2 - z1, x2 - x1);
+  return len;
+}
+// Note labels are HTML overlays projected each frame (renderer independent).
+let labels = [];
+const labelLayer = document.createElement('div');
+labelLayer.style.cssText = 'position:fixed;inset:0;pointer-events:none';
+document.body.insertBefore(labelLayer, $('controls'));
+function label(text, x, y, z, color = '#e6e8ec') {
+  const el = document.createElement('div');
+  el.textContent = text;
+  el.style.cssText = `position:absolute;transform:translate(-50%,-50%);font:700 18px system-ui;color:${color};text-shadow:0 1px 3px #000`;
+  labelLayer.appendChild(el);
+  labels.push({ el, pos:new THREE.Vector3(x, y, z) });
+}
+function placeLabels() {
+  const v = new THREE.Vector3();
+  for (const l of labels) {
+    v.copy(l.pos).project(camera);
+    l.el.style.left = ((v.x + 1) / 2 * innerWidth) + 'px';
+    l.el.style.top = ((1 - v.y) / 2 * innerHeight) + 'px';
+    l.el.style.display = v.z < 1 ? '' : 'none';
+  }
+}
+// open-top tube, walls only, top rim at y=0
+function tube(x, innerX, innerZ, height, w, material, floorAt = null, floorT = 2) {
+  const ox = innerX + 2 * w;
+  box(ox, height, w, x, -height / 2, innerZ / 2 + w / 2, material);
+  box(ox, height, w, x, -height / 2, -innerZ / 2 - w / 2, material);
+  box(w, height, innerZ, x - innerX / 2 - w / 2, -height / 2, 0, material);
+  box(w, height, innerZ, x + innerX / 2 + w / 2, -height / 2, 0, material);
+  if (floorAt !== null) box(innerX, floorT, innerZ, x, -floorAt - floorT / 2, 0, M.floor);
+}
+// key + posts + saddle pads; keyY = height of key underside
+function keyAndPosts(n, keyY, padY) {
+  for (const s of [-1, 1]) {
+    box(14, 2, 14, n.x, padY + 1, s * n.holeSpan / 2, M.saddle);
+    box(REF.keyW, .25, 1.22, n.x, padY + 2.1, s * n.holeSpan / 2, M.band, false); // hair tie hint
+    cyl(2.5, 10, n.x, keyY + 3, s * n.holeSpan / 2, M.post);
+  }
+  if (!state.p.showKeys) return;
+  const k = box(REF.keyW, 3, n.keyL, n.x, keyY + 1.5, 0, n.ref ? M.keyRef : M.key, false);
+  k.material = n.ref ? M.keyRef : M.key;
+}
+
+// ---------- variants ----------
+function buildA(ns, p) {
+  const fl = 2, w = p.wall, parts = [];
+  for (const n of ns) {
+    tube(n.x, REF.ductT, n.ductW, n.depth + fl, w, M.body, n.depth, fl);
+    // ears from duct to saddle pad
+    const z0 = n.ductW / 2 + w, z1 = n.holeSpan / 2 + 7;
+    for (const s of [-1, 1]) box(REF.ductT + 2 * w, 4, z1 - z0, n.x, -2, s * (z0 + z1) / 2, M.body);
+    keyAndPosts(n, 3.5, 0);
+    parts.push([`Tube ${n.name}`, REF.ductT + 2 * w, 2 * z1, n.depth + fl]);
+  }
+  let rail = 0;
+  for (const s of [-1, 1]) for (let i = 0; i + 1 < ns.length; i++) {
+    rail += beam(ns[i].x, s * ns[i].holeSpan / 2, ns[i + 1].x, s * ns[i + 1].holeSpan / 2, -8, 8, 8, M.frame);
+  }
+  const railEach = rail / 2;
+  const segs = Math.ceil(railEach / (p.bed - 10));
+  for (let i = 0; i < 2 * segs; i++) parts.push([`Rail segment ${i + 1}`, railEach / segs, 8, 8]);
+  return { parts, height: Math.max(...ns.map(n => n.depth)) + fl + 4,
+    pros:['Each tube is small, prints standing, one failed print costs one note.', 'Air depth per note is exact; no moving parts, no latch problems (B1).', 'Open frame, light, looks like a real glockenspiel/vibraphone.'],
+    cons:['Depth is fixed: a wrong end-correction means reprinting tubes.', 'Many joints (tube to rail): needs a clip or glue design.', 'Slanted rails must match each key hole span exactly.'] };
+}
+
+function buildB(ns, p) {
+  const fl = 2, w = p.wall, H = Math.max(...ns.map(n => n.depth)) + fl + fl;
+  for (let i = 0; i < ns.length; i++) {
+    const n = ns[i];
+    const inX = p.pitch - w;
+    for (const s of [-1, 1]) {
+      box(p.pitch, H, w, n.x, -H / 2, s * (n.ductW / 2 + w / 2), M.body);
+      const z0 = n.ductW / 2 + w, z1 = n.holeSpan / 2 + 7;
+      box(p.pitch, 3, z1 - z0, n.x, -1.5, s * (z0 + z1) / 2, M.body); // top deck
+    }
+    box(inX, fl, n.ductW, n.x, -n.depth - fl / 2, 0, M.floor);       // tuned floor
+    box(p.pitch, fl, n.ductW + 2 * w, n.x, -H + fl / 2, 0, M.body);  // bottom plate
+    const nb = ns[i + 1];
+    const zl = Math.max(n.ductW, nb ? nb.ductW : 0) + 2 * w;
+    box(w, H, zl, n.x + p.pitch / 2, -H / 2, 0, M.body);
+    if (i === 0) box(w, H, n.ductW + 2 * w, n.x - p.pitch / 2, -H / 2, 0, M.body);
+    keyAndPosts(n, 3.5, 0);
+  }
+  const L = ns.length * p.pitch + w, Wmax = Math.max(...ns.map(n => n.holeSpan)) + 14;
+  const segs = Math.ceil(L / (p.bed - 10));
+  const parts = [];
+  for (let i = 0; i < segs; i++) parts.push([`Box segment ${i + 1}`, L / segs, Wmax, H]);
+  return { parts, height: H,
+    pros:['Fewest parts, very stiff, sits flat on a table.', 'Shared walls: compact, keys at exact pitch by construction.', 'Floors could be separate inserts, so depth can be retuned without reprinting the shell.'],
+    cons:['Dead air under the high-note floors; most filament and print time.', 'Long: must be split into segments with a joint.', 'Thin shared partitions may couple neighbouring cells (test needed).'] };
+}
+
+function buildC(ns, p) {
+  const w = p.wall, guide = 18;
+  const Rz = Math.max(...ns.map(n => n.holeSpan / 2)) + 8;
+  let Hc = 0;
+  const parts = [];
+  for (const n of ns) {
+    const h = n.depth + guide;
+    Hc = Math.max(Hc, h + 60);
+    tube(n.x, REF.ductT, n.ductW, h, w, M.body);
+    // piston plate + rod
+    box(REF.ductT - .5, 4, n.ductW - .5, n.x, -n.depth - 2, 0, M.piston);
+    box(8, 55, 8, n.x, -n.depth - 4 - 27.5, 0, M.piston);
+    // ears out to the straight rails
+    const z0 = n.ductW / 2 + w;
+    for (const s of [-1, 1]) box(REF.ductT + 2 * w, 4, Rz + 6 - z0, n.x, -2, s * (z0 + Rz + 6) / 2, M.body);
+    keyAndPosts(n, 3.5, 0);
+    parts.push([`Cartridge ${n.name}`, REF.ductT + 2 * w, 2 * (Rz + 6), h], [`Piston ${n.name}`, REF.ductT, n.ductW, 59]);
+  }
+  const L = ns.length * p.pitch + 30;
+  for (const s of [-1, 1]) box(L, 8, 12, 0, -8, s * Rz, M.frame);
+  for (const s of [-1, 1]) box(12, Hc, 2 * Rz + 12, s * (L / 2 + 6), -Hc / 2, 0, M.frame);
+  const segs = Math.ceil(L / (p.bed - 10));
+  for (let i = 0; i < 2 * segs; i++) parts.push([`Rail segment ${i + 1}`, L / segs, 12, 8]);
+  parts.push(['End leg L', 12, 2 * Rz + 12, Hc], ['End leg R', 12, 2 * Rz + 12, Hc]);
+  return { parts, height: Hc,
+    pros:['Direct scale-up of the v2 body: concept already proven.', 'Every note tunable by ear after printing (piston).', 'Cartridges swap out; can start with 3 to 4 notes and grow.'],
+    cons:['2 parts per note plus latch: the B1 latch problem multiplies by N.', 'Tallest (rods hang below); needs legs.', 'Straight rails mean long ears on short (high) keys.'] };
+}
+
+// ---------- render ----------
+function rebuild() {
+  const p = readParams(); state.p = p;
+  scene.remove(root); root = new THREE.Group(); scene.add(root); vol = 0;
+  labels = []; labelLayer.innerHTML = '';
+  M = {
+    body: mat(0x8fb3d9), floor: mat(0x4d7fb8), frame: mat(0x9a9a9a), piston: mat(0x6bd08f),
+    saddle: mat(0xdddddd), post: mat(0xeeeeee), band: mat(0x222222),
+    key: mat(0xc0392b, { metalness:.6, roughness:.35 }),
+    keyRef: mat(0xf5b942, { metalness:.6, roughness:.35 }),
+  };
+  const ns = notes(p);
+  const res = { A:buildA, B:buildB, C:buildC }[state.variant](ns, p);
+  for (const n of ns) label(n.name, n.x, 12, Math.max(...ns.map(k => k.keyL)) / 2 + 22, n.ref ? '#f5b942' : '#e6e8ec');
+  if (p.showBed) {
+    const e = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(p.bed, p.bed, p.bed)), new THREE.LineBasicMaterial({ color:0xf5b942 }));
+    e.position.set(ns[0].x - p.pitch / 2 + p.bed / 2, -res.height - 10 + p.bed / 2, 0); root.add(e);
+  }
+  grid.position.y = -res.height - 10;
+  renderInfo(ns, p, res);
+  history.replaceState(null, '', '?variant=' + state.variant);
+  $('vlabel').textContent = `${state.variant} (${VARIANTS[state.variant].title})  ${KEYS.indexOf(state.variant) + 1}/${KEYS.length}`;
+  draw();
+}
+
+function renderInfo(ns, p, res) {
+  const v = VARIANTS[state.variant];
+  const L = ns.length * p.pitch;
+  const span = Math.max(...ns.map(n => n.keyL));
+  const fit = res.parts.every(([, a, b, c]) => {
+    const d = [a, b, c].sort((x, y) => y - x); return d[0] <= p.bed && d[1] <= p.bed && d[2] <= p.bed;
+  });
+  const grams = vol / 1000 * 1.24;
+  const rows = ns.map(n => {
+    const shortT = n.depth < 10, wide = n.ductW > n.quarter * 2 * 0.9;
+    return `<tr class="${n.ref ? 'ref' : ''}"><td>${n.name}${n.ref ? ' (measured)' : ''}</td><td>${n.f.toFixed(0)}</td><td>${n.keyL.toFixed(1)}</td>
+      <td>${n.quarter.toFixed(1)}</td><td class="${shortT ? 'warn' : ''}">${n.depth.toFixed(1)}</td><td class="${wide ? 'warn' : ''}">${REF.ductT} x ${n.ductW.toFixed(1)}</td></tr>`;
+  }).join('');
+  $('info').innerHTML = `
+    ${useSVG ? '<div class="muted" style="color:#f5b942">No WebGL in this browser: using the slower SVG renderer (CPU). Reason: ' + (glReason || 'unknown') + '. Fully restart the browser (GPU crash blocks WebGL until restart).</div>' : ''}
+    <h1>Variant ${state.variant}: ${v.title}</h1>
+    <div class="muted">${v.blurb}</div>
+    <h2>Overall</h2>
+    <table>
+      <tr><td>Keys</td><td>${ns.length} (${name(ns[0].m)} to ${name(ns[ns.length - 1].m)})</td></tr>
+      <tr><td>Footprint (row x longest key)</td><td>${L.toFixed(0)} x ${span.toFixed(0)} mm</td></tr>
+      <tr><td>Height below key</td><td>${res.height.toFixed(0)} mm</td></tr>
+      <tr><td>Printed parts</td><td>${res.parts.length}</td></tr>
+      <tr><td>All parts fit a ${p.bed} mm bed</td><td class="${fit ? 'good' : 'warn'}">${fit ? 'yes' : 'NO'}</td></tr>
+      <tr><td>Solid volume (upper bound)</td><td>${(vol / 1000).toFixed(0)} cm3, about ${grams.toFixed(0)} g PLA</td></tr>
+    </table>
+    <h2>Pros</h2><ul>${res.pros.map(s => `<li>${s}</li>`).join('')}</ul>
+    <h2>Cons</h2><ul>${res.cons.map(s => `<li>${s}</li>`).join('')}</ul>
+    <h2>Per note</h2>
+    <table><tr><th>Note</th><th>f Hz</th><th>Key L*</th><th>λ/4</th><th>Depth</th><th>Duct inner</th></tr>${rows}</table>
+    <div class="muted" style="margin-top:6px">
+      * Key length estimated as 123.87 x sqrt(1402 / f) from the measured F6 key (same cross-section assumed). Hole span and duct width scale the same way.
+      Depth = λ/4 minus end correction (v2 F6 best guess 42 to 50 gives about 14). Red depth: under 10 mm, little gain expected.
+      Red duct: duct width near λ/2, cross modes possible.
+    </div>
+    <h2>Parts list</h2>
+    <table><tr><th>Part</th><th>X</th><th>Y</th><th>Z</th></tr>
+      ${res.parts.map(([n, a, b, c]) => `<tr><td>${n}</td><td>${a.toFixed(0)}</td><td>${b.toFixed(0)}</td><td>${c.toFixed(0)}</td></tr>`).join('')}
+    </table>`;
+}
+
+// ---------- switcher ----------
+function go(d) { state.variant = KEYS[(KEYS.indexOf(state.variant) + d + KEYS.length) % KEYS.length]; rebuild(); }
+$('prev').onclick = () => go(-1); $('next').onclick = () => go(1);
+addEventListener('keydown', e => {
+  if (e.target.closest('input, select, textarea, [contenteditable]')) return;
+  if (e.key === 'ArrowLeft') go(-1); if (e.key === 'ArrowRight') go(1);
+});
+document.querySelectorAll('#controls input, #controls select').forEach(el => el.addEventListener('input', rebuild));
+
+// Render on demand (the SVG renderer is too slow for a continuous loop).
+let pending = false;
+function draw() {
+  if (pending) return; pending = true;
+  requestAnimationFrame(() => { pending = false; renderer.render(scene, camera); placeLabels(); });
+}
+controls.addEventListener('change', draw);
+function resize() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); draw(); }
+addEventListener('resize', resize); resize();
+rebuild();
+</script>
+</body>
+</html>
